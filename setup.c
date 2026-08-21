@@ -964,27 +964,27 @@ void read_gitfile_error_die(int error_code, const char *path)
 const char *read_gitfile_gently(const char *path, int *return_error_code)
 {
 	int error_code = 0;
-	char *buf = NULL;
 	const char *slash;
+	struct strbuf contents = STRBUF_INIT;
 	static struct strbuf realpath = STRBUF_INIT;
 
-	buf = xstrdup_or_null(read_gitfile_raw(path, &error_code));
+	error_code = read_gitfile_raw(&contents, path);
 	if (error_code)
 		goto cleanup_return;
 
-	if (!is_absolute_path(buf) && (slash = strrchr(path, '/'))) {
+	if (!is_absolute_path(contents.buf) && (slash = strrchr(path, '/'))) {
 		size_t pathlen = slash+1 - path;
-		char *dir = xstrfmt("%.*s%.*s", (int)pathlen, path,
-				    (int)strlen(buf), buf);
-		free(buf);
-		buf = dir;
+		char *dir = xstrfmt("%.*s%s", (int)pathlen, path, contents.buf);
+		strbuf_reset(&contents);
+		strbuf_addstr(&contents, dir);
+		free(dir);
 	}
-	if (!is_git_directory(buf)) {
+	if (!is_git_directory(contents.buf)) {
 		error_code = READ_GITFILE_ERR_NOT_A_REPO;
 		goto cleanup_return;
 	}
 
-	strbuf_realpath(&realpath, buf, 1);
+	strbuf_realpath(&realpath, contents.buf, 1);
 
 cleanup_return:
 	if (return_error_code)
@@ -992,11 +992,11 @@ cleanup_return:
 	else if (error_code)
 		read_gitfile_error_die(error_code, path);
 
-	free(buf);
+	strbuf_release(&contents);
 	return error_code ? NULL : realpath.buf;
 }
 
-const char *read_gitfile_raw(const char *path, int *return_error_code)
+int read_gitfile_raw(struct strbuf *contents, const char *path)
 {
 	const int max_file_size = 1 << 20;  /* 1MB */
 	int error_code = 0;
@@ -1004,7 +1004,6 @@ const char *read_gitfile_raw(const char *path, int *return_error_code)
 	struct stat st;
 	int fd;
 	ssize_t len;
-	static struct strbuf contents = STRBUF_INIT;
 
 	if (stat(path, &st)) {
 		if (errno == ENOENT || errno == ENOTDIR)
@@ -1047,13 +1046,11 @@ const char *read_gitfile_raw(const char *path, int *return_error_code)
 		error_code = READ_GITFILE_ERR_NO_PATH;
 		goto cleanup_return;
 	}
-	strbuf_reset(&contents);
-	strbuf_add(&contents, buf+8, len-8);
+	strbuf_add(contents, buf+8, len-8);
 
 cleanup_return:
-	*return_error_code = error_code;
 	free(buf);
-	return error_code ? NULL : contents.buf;
+	return error_code;
 }
 
 static void apply_gitdir_and_environment(struct repository *repo, const char *path)
