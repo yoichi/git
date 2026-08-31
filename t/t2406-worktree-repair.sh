@@ -56,15 +56,12 @@ test_expect_success 'repair missing .git file' '
 '
 
 test_expect_success 'repair bogus .git file' '
-	test_corrupt_gitfile "echo \"gitdir: /nowhere\" >corrupt/.git" \
+	test_corrupt_gitfile "echo \"contents not started with gitdir:\" >corrupt/.git" \
 		".git file broken"
 '
 
-test_expect_success 'repair incorrect .git file' '
-	test_when_finished "rm -rf other && git worktree prune" &&
-	test_create_repo other &&
-	other=$(git -C other rev-parse --absolute-git-dir) &&
-	test_corrupt_gitfile "echo \"gitdir: $other\" >corrupt/.git" \
+test_expect_success 'repair unlinked .git file' '
+	test_corrupt_gitfile "echo \"gitdir: /nowhere/worktrees/corrupt\" >corrupt/.git" \
 		".git file incorrect"
 '
 
@@ -87,6 +84,26 @@ test_expect_success 'repair .git file from bare.git' '
 	git -C bare.git worktree repair &&
 	git -C corrupt rev-parse --absolute-git-dir >actual &&
 	test_cmp expect actual
+'
+
+test_expect_success 'skip unrelated .git file (not a worktree)' '
+	test_when_finished "rm -rf corrupt other && git worktree prune" &&
+	git worktree add --detach corrupt &&
+	test_create_repo other &&
+	other=$(git -C other rev-parse --absolute-git-dir) &&
+	echo "gitdir: $other" >corrupt/.git &&
+	test_must_fail git worktree repair 2>err &&
+	test_grep "unrelated .git file" err
+'
+
+test_expect_success 'skip unrelated .git file (id mismatch)' '
+	test_when_finished "rm -rf corrupt other && git worktree prune" &&
+	git worktree add --detach corrupt &&
+	rm -rf corrupt &&
+	git worktree add --detach other &&
+	mv other corrupt &&
+	test_must_fail git worktree repair 2>err &&
+	test_grep "unrelated .git file" err
 '
 
 test_expect_success 'invalid worktree path' '

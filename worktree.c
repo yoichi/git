@@ -637,6 +637,21 @@ int other_head_refs(struct repository *repo,
 	return ret;
 }
 
+static const char *get_worktree_id(const char *dotgit_contents)
+{
+	const char *slash = find_last_dir_sep(dotgit_contents);
+	const char *prefix = "/worktrees";
+	int prefixlen = strlen(prefix);
+	if (slash - dotgit_contents < prefixlen)
+		goto error;
+	if (strncmp(slash - prefixlen, prefix, prefixlen))
+		goto error;
+	return slash + 1;
+error:
+	// return empty string
+	return dotgit_contents + strlen(dotgit_contents);
+}
+
 /*
  * Repair worktree's /path/to/worktree/.git file if missing, corrupt, or not
  * pointing at <repo>/worktrees/<id>.
@@ -684,8 +699,10 @@ static void repair_gitfile(struct worktree *wt,
 	if (err == READ_GITFILE_ERR_NOT_A_FILE ||
 		err == READ_GITFILE_ERR_IS_A_DIR)
 		fn(1, wt->path, _(".git is not a file"), cb_data);
-	else if (err || !is_git_directory(backlink.buf))
+	else if (err)
 		repair = _(".git file broken");
+	else if (strcmp(get_worktree_id(dotgit_contents), wt->id))
+		fn(1, wt->path, _("unrelated .git file"), cb_data);
 	else if (fspathcmp(backlink.buf, repo.buf))
 		repair = _(".git file incorrect");
 	else if (use_relative_paths == is_absolute_path(dotgit_contents))
@@ -804,14 +821,9 @@ static ssize_t infer_backlink(struct repository *repo,
 	struct strbuf actual = STRBUF_INIT;
 	const char *id;
 
-	if (strbuf_read_file(&actual, gitfile, 0) < 0)
+	if (read_gitfile_raw(&actual, gitfile))
 		goto error;
-	if (!starts_with(actual.buf, "gitdir:"))
-		goto error;
-	if (!(id = find_last_dir_sep(actual.buf)))
-		goto error;
-	strbuf_trim(&actual);
-	id++; /* advance past '/' to point at <id> */
+	id = get_worktree_id(actual.buf);
 	if (!*id)
 		goto error;
 	repo_common_path_replace(repo, inferred, "worktrees/%s", id);
