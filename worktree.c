@@ -637,7 +637,8 @@ int other_head_refs(struct repository *repo,
 	return ret;
 }
 
-static const char *get_worktree_id(const char *dotgit_contents)
+static int get_worktree_id(struct strbuf *worktree_id,
+			   const char *dotgit_contents)
 {
 	const char *sep = find_last_dir_sep(dotgit_contents);
 	const char *prefix = "worktrees";
@@ -646,8 +647,9 @@ static const char *get_worktree_id(const char *dotgit_contents)
 	    sep - dotgit_contents < prefixlen + 1||
 	    strncmp(sep - prefixlen, prefix, prefixlen) ||
 	    !is_dir_sep(*(sep - prefixlen - 1)))
-		return "";
-	return sep + 1;
+		return 1;
+	strbuf_addstr(worktree_id, sep + 1);
+	return 0;
 }
 
 /*
@@ -663,6 +665,7 @@ static void repair_gitfile(struct worktree *wt,
 	struct strbuf repo = STRBUF_INIT;
 	struct strbuf backlink = STRBUF_INIT;
 	struct strbuf contents = STRBUF_INIT;
+	struct strbuf worktree_id = STRBUF_INIT;
 	const char *dotgit_contents = NULL;
 	const char *repair = NULL;
 	char *path = NULL;
@@ -699,7 +702,8 @@ static void repair_gitfile(struct worktree *wt,
 		fn(1, wt->path, _(".git is not a file"), cb_data);
 	else if (err)
 		repair = _(".git file broken");
-	else if (strcmp(get_worktree_id(dotgit_contents), wt->id))
+	else if (get_worktree_id(&worktree_id, dotgit_contents) ||
+		 strcmp(worktree_id.buf, wt->id))
 		fn(1, wt->path, _("unrelated .git file"), cb_data);
 	else if (fspathcmp(backlink.buf, repo.buf))
 		repair = _(".git file incorrect");
@@ -719,6 +723,7 @@ done:
 	strbuf_release(&gitdir);
 	strbuf_release(&backlink);
 	strbuf_release(&contents);
+	strbuf_release(&worktree_id);
 }
 
 static void repair_noop(int iserr UNUSED,
@@ -816,18 +821,19 @@ static ssize_t infer_backlink(struct repository *repo,
 			      const char *dotgit_contents,
 			      struct strbuf *inferred)
 {
-	const char *id;
+	struct strbuf worktree_id = STRBUF_INIT;
 
-	id = get_worktree_id(dotgit_contents);
-	if (!*id)
+	if (get_worktree_id(&worktree_id, dotgit_contents))
 		goto error;
-	repo_common_path_replace(repo, inferred, "worktrees/%s", id);
+	repo_common_path_replace(repo, inferred, "worktrees/%s", worktree_id.buf);
 	if (!is_git_directory(inferred->buf))
 		goto error;
 
+	strbuf_release(&worktree_id);
 	return inferred->len;
 error:
 	strbuf_reset(inferred); /* clear invalid path */
+	strbuf_release(&worktree_id);
 	return -1;
 }
 
