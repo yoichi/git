@@ -98,6 +98,19 @@ test_expect_success 'skip unrelated .git file' '
 	test_grep "unrelated .git file" err
 '
 
+test_expect_success 'repair moved worktree whose .git with extra separators' '
+	test_when_finished "rm -rf side sidemoved && git worktree prune" &&
+	git worktree add --detach side &&
+	mv side sidemoved &&
+	cat sidemoved/.git >expect &&
+	sed s,/,//,g sidemoved/.git | sed s,$,//, >sidemoved/.newgit &&
+	! cmp sidemoved/.git sidemoved/.newgit &&
+	mv sidemoved/.newgit sidemoved/.git &&
+	git worktree repair sidemoved 2>err &&
+	test_cmp expect sidemoved/.git &&
+	test_grep "gitdir incorrect" err
+'
+
 test_expect_success WINDOWS 'repair moved worktree whose .git file uses backslash' '
 	test_when_finished "rm -rf side sidemoved && git worktree prune" &&
 	git worktree add --detach side &&
