@@ -639,14 +639,15 @@ int other_head_refs(struct repository *repo,
 
 static const char *get_worktree_id(const char *dotgit_contents)
 {
-	const char *slash = find_last_dir_sep(dotgit_contents);
-	const char *prefix = "/worktrees";
+	const char *sep = find_last_dir_sep(dotgit_contents);
+	const char *prefix = "worktrees";
 	int prefixlen = strlen(prefix);
-	if (!slash ||
-	    slash - dotgit_contents < prefixlen ||
-	    strncmp(slash - prefixlen, prefix, prefixlen))
+	if (!sep ||
+	    sep - dotgit_contents < prefixlen + 1||
+	    strncmp(sep - prefixlen, prefix, prefixlen) ||
+	    !is_dir_sep(*(sep - prefixlen - 1)))
 		return "";
-	return slash + 1;
+	return sep + 1;
 }
 
 /*
