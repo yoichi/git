@@ -640,15 +640,34 @@ int other_head_refs(struct repository *repo,
 static int get_worktree_id(struct strbuf *worktree_id,
 			   const char *dotgit_contents)
 {
-	const char *sep = find_last_dir_sep(dotgit_contents);
+	const char *id_end;
+	const char *id;
+	const char *prefix_end;
 	const char *prefix = "worktrees";
 	int prefixlen = strlen(prefix);
-	if (!sep ||
-	    sep - dotgit_contents < prefixlen + 1||
-	    strncmp(sep - prefixlen, prefix, prefixlen) ||
-	    !is_dir_sep(*(sep - prefixlen - 1)))
+
+	id_end = dotgit_contents + strlen(dotgit_contents);
+	// skip trailing separators
+	while (dotgit_contents < id_end && is_dir_sep(*(id_end - 1)))
+		id_end--;
+	if (id_end == dotgit_contents)
 		return 1;
-	strbuf_addstr(worktree_id, sep + 1);
+	id = id_end;
+	// find the last separator
+	while (dotgit_contents < id && !is_dir_sep(*(id - 1)))
+		id--;
+	if (id == dotgit_contents || id == id_end)
+		return 1;
+	prefix_end = id - 1;
+	// skip repeated separators
+	while (dotgit_contents < prefix_end && is_dir_sep(*(prefix_end - 1)))
+		prefix_end--;
+	// check prefix proceeded by a separator
+	if (prefix_end - dotgit_contents < prefixlen + 1 ||
+	    strncmp(prefix_end - prefixlen, prefix, prefixlen) ||
+	    !is_dir_sep(*(prefix_end - prefixlen - 1)))
+		return 1;
+	strbuf_add(worktree_id, id, id_end - id);
 	return 0;
 }
 
