@@ -342,11 +342,113 @@ test_expect_success 'submodule--helper migrates legacy modules' '
 		git submodule--helper migrate-gitdir-configs &&
 
 		# test that migration worked
-		git config submodule.sub1.gitdir >actual &&
+		git config --worktree submodule.sub1.gitdir >actual &&
 		echo ".git/modules/sub1" >expect &&
 		test_cmp expect actual &&
-		git config submodule.sub2.gitdir >actual &&
+		git config --worktree submodule.sub2.gitdir >actual &&
 		echo ".git/modules/sub2" >expect &&
+		test_cmp expect actual &&
+
+		# repository extension is enabled after migration
+		git config extensions.submodulePathConfig >actual &&
+		echo "true" >expect &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'submodule--helper on a linked worktree migrates legacy modules' '
+	test_when_finished "rm -rf repo-clone-wt" &&
+	git clone upstream repo-clone-wt &&
+	(
+		cd repo-clone-wt &&
+		git worktree add wt &&
+		cd wt &&
+		git submodule update --init --recursive &&
+
+		# previous submodules exist and were not migrated yet
+		test_must_fail git config submodule.sub1.gitdir &&
+		test_must_fail git config submodule.sub2.gitdir &&
+		test_path_is_dir ../.git/worktrees/wt/modules/sub1 &&
+		test_path_is_dir ../.git/worktrees/wt/modules/sub2 &&
+
+		# run migration on a linked worktree
+		git submodule--helper migrate-gitdir-configs &&
+
+		# test that migration worked for a linked worktree
+		git config --worktree submodule.sub1.gitdir >actual &&
+		echo "../.git/worktrees/wt/modules/sub1" >expect &&
+		test_cmp expect actual &&
+		git config --worktree submodule.sub2.gitdir >actual &&
+		echo "../.git/worktrees/wt/modules/sub2" >expect &&
+		test_cmp expect actual &&
+
+		# repository extension is enabled after migration
+		git config extensions.submodulePathConfig >actual &&
+		echo "true" >expect &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'submodule--helper on a linked worktree migrates legacy modules in the main worktree' '
+	test_when_finished "rm -rf repo-clone-wt-main" &&
+	git clone upstream repo-clone-wt-main &&
+	(
+		cd repo-clone-wt-main &&
+		git submodule update --init --recursive &&
+
+		# previous submodules exist and were not migrated yet
+		test_must_fail git config submodule.sub1.gitdir &&
+		test_must_fail git config submodule.sub2.gitdir &&
+		test_path_is_dir .git/modules/sub1 &&
+		test_path_is_dir .git/modules/sub2 &&
+
+		# run migration on a linked worktree
+		git worktree add wt &&
+		cd wt &&
+		git submodule--helper migrate-gitdir-configs &&
+		cd .. &&
+
+		# test that migration worked for a linked worktree
+		git config --worktree submodule.sub1.gitdir >actual &&
+		echo ".git/modules/sub1" >expect &&
+		test_cmp expect actual &&
+		git config --worktree submodule.sub2.gitdir >actual &&
+		echo ".git/modules/sub2" >expect &&
+		test_cmp expect actual &&
+
+		# repository extension is enabled after migration
+		git config extensions.submodulePathConfig >actual &&
+		echo "true" >expect &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'submodule--helper on the main worktree migrates legacy modules' '
+	test_when_finished "rm -rf repo-clone-main" &&
+	git clone upstream repo-clone-main &&
+	(
+		cd repo-clone-main &&
+		git worktree add wt &&
+		cd wt &&
+		git submodule update --init --recursive &&
+
+		# previous submodules exist and were not migrated yet
+		test_must_fail git config submodule.sub1.gitdir &&
+		test_must_fail git config submodule.sub2.gitdir &&
+		test_path_is_dir ../.git/worktrees/wt/modules/sub1 &&
+		test_path_is_dir ../.git/worktrees/wt/modules/sub2 &&
+
+		# run migration on the main worktree
+		cd .. &&
+		git submodule--helper migrate-gitdir-configs &&
+		cd wt &&
+
+		# test that migration worked for a linked worktree
+		git config --worktree submodule.sub1.gitdir >actual &&
+		echo "../.git/worktrees/wt/modules/sub1" >expect &&
+		test_cmp expect actual &&
+		git config --worktree submodule.sub2.gitdir >actual &&
+		echo "../.git/worktrees/wt/modules/sub2" >expect &&
 		test_cmp expect actual &&
 
 		# repository extension is enabled after migration

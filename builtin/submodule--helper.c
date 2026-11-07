@@ -481,10 +481,12 @@ struct init_cb {
 #define INIT_CB_INIT { 0 }
 
 static int validate_and_set_submodule_gitdir(struct strbuf *gitdir_path,
-					     const char *submodule_name)
+					     const char *submodule_name,
+					     struct config_set *cs,
+					     struct worktree *wt)
 {
-	const char *value;
 	char *key;
+	const char *file;
 
 	if (validate_submodule_git_dir(gitdir_path->buf, submodule_name))
 		return -1;
@@ -492,12 +494,15 @@ static int validate_and_set_submodule_gitdir(struct strbuf *gitdir_path,
 	key = xstrfmt("submodule.%s.gitdir", submodule_name);
 
 	/* Nothing to do if the config already exists. */
-	if (!repo_config_get_string_tmp(the_repository, key, &value)) {
+	if (!git_configset_get(cs, key)) {
 		free(key);
 		return 0;
 	}
 
-	if (repo_config_set_worktree_gently(the_repository, key, gitdir_path->buf)) {
+	file = wt->repo->repository_format_worktree_config ?
+	  worktree_git_path(wt, "config.worktree") : NULL;
+	if (repo_config_set_in_file_gently(wt->repo, file,
+					   key, NULL, gitdir_path->buf)) {
 		free(key);
 		return -1;
 	}
@@ -506,9 +511,10 @@ static int validate_and_set_submodule_gitdir(struct strbuf *gitdir_path,
 	return 0;
 }
 
-static void create_default_gitdir_config(const char *submodule_name)
+static void create_default_gitdir_config(const char *submodule_name,
+					 struct worktree *wt)
 {
-	struct worktree *wt = get_current_worktree(the_repository);
+	struct config_set cs = { 0 };
 	const char *modules_dir;
 	struct strbuf tmp = STRBUF_INIT;
 	struct strbuf gitdir_path = STRBUF_INIT;
@@ -525,16 +531,33 @@ static void create_default_gitdir_config(const char *submodule_name)
 		      "Please read \"CONFIGURATION FILE\" section "
 		      "in \"git help worktree\" for details"));
 
+	git_configset_init(&cs);
+	if (wt->repo->repository_format_worktree_config) {
+		git_configset_add_file(&cs,
+				       worktree_git_path(wt, "config.worktree"));
+	} else {
+		char *file = repo_git_path(wt->repo, "config");
+		git_configset_add_file(&cs, file);
+		free(file);
+	}
+
 	modules_dir = worktree_git_path(wt, "modules/");
 	if (is_absolute_path(modules_dir)) {
 		modules_dir = relative_path(modules_dir, wt->path, &tmp);
+	} else if (!is_main_worktree(wt)) {
+		struct strbuf abs = STRBUF_INIT;
+		strbuf_realpath(&abs, modules_dir, 1);
+		strbuf_addch(&abs, '/');
+		modules_dir = relative_path(abs.buf, wt->path, &tmp);
+		strbuf_release(&abs);
 	}
 
 	/* Case 1: try the plain module name */
 	strbuf_addstr(&gitdir_path, modules_dir);
 	strbuf_addstr(&gitdir_path, submodule_name);
 	if (!validate_and_set_submodule_gitdir(&gitdir_path,
-					       submodule_name))
+					       submodule_name,
+					       &cs, wt))
 		goto cleanup;
 
 	/* Case 2.1: Try URI-safe (RFC3986) encoding first, this fixes nested gitdirs */
@@ -542,7 +565,8 @@ static void create_default_gitdir_config(const char *submodule_name)
 	strbuf_addstr(&gitdir_path, modules_dir);
 	strbuf_addstr_urlencode(&gitdir_path, submodule_name, is_rfc3986_unreserved);
 	if (!validate_and_set_submodule_gitdir(&gitdir_path,
-					       submodule_name))
+					       submodule_name,
+					       &cs, wt))
 		goto cleanup;
 
 	/* Case 2.2: Try extended uppercase URI (RFC3986) encoding, to fix case-folding */
@@ -550,7 +574,8 @@ static void create_default_gitdir_config(const char *submodule_name)
 	strbuf_addstr(&gitdir_path, modules_dir);
 	strbuf_addstr_urlencode(&gitdir_path, submodule_name, is_casefolding_rfc3986_unreserved);
 	if (!validate_and_set_submodule_gitdir(&gitdir_path,
-					       submodule_name))
+					       submodule_name,
+					       &cs, wt))
 		goto cleanup;
 
 	/* Case 2.3: Try some derived gitdir names, see if one sticks */
@@ -560,7 +585,8 @@ static void create_default_gitdir_config(const char *submodule_name)
 		strbuf_addstr_urlencode(&gitdir_path, submodule_name, is_rfc3986_unreserved);
 		strbuf_addch(&gitdir_path, c);
 		if (!validate_and_set_submodule_gitdir(&gitdir_path,
-						       submodule_name))
+						       submodule_name,
+						       &cs, wt))
 			goto cleanup;
 
 		strbuf_reset(&gitdir_path);
@@ -568,7 +594,8 @@ static void create_default_gitdir_config(const char *submodule_name)
 		strbuf_addstr_urlencode(&gitdir_path, submodule_name, is_casefolding_rfc3986_unreserved);
 		strbuf_addch(&gitdir_path, c);
 		if (!validate_and_set_submodule_gitdir(&gitdir_path,
-						       submodule_name))
+						       submodule_name,
+						       &cs, wt))
 			goto cleanup;
 	}
 
@@ -585,7 +612,8 @@ static void create_default_gitdir_config(const char *submodule_name)
 	strbuf_addstr(&gitdir_path, modules_dir);
 	strbuf_addstr(&gitdir_path, hex_name_hash);
 	if (!validate_and_set_submodule_gitdir(&gitdir_path,
-					       submodule_name))
+					       submodule_name,
+					       &cs, wt))
 		goto cleanup;
 
 	/* Case 3: nothing worked, error out */
@@ -597,7 +625,7 @@ static void create_default_gitdir_config(const char *submodule_name)
 cleanup:
 	strbuf_release(&gitdir_path);
 	strbuf_release(&tmp);
-	free_worktree(wt);
+	git_configset_clear(&cs);
 }
 
 static void init_submodule(const char *path, const char *prefix,
@@ -672,8 +700,11 @@ static void init_submodule(const char *path, const char *prefix,
 			die(_("Failed to register update mode for submodule path '%s'"), displaypath);
 	}
 
-	if (the_repository->repository_format_submodule_path_cfg)
-		create_default_gitdir_config(sub->name);
+	if (the_repository->repository_format_submodule_path_cfg) {
+		struct worktree *wt = get_current_worktree(the_repository);
+		create_default_gitdir_config(sub->name, wt);
+		free_worktree(wt);
+	}
 
 	strbuf_release(&sb);
 	free(displaypath);
@@ -1384,15 +1415,16 @@ static int module_gitdir(int argc, const char **argv, const char *prefix UNUSED,
 	return 0;
 }
 
-static int module_migrate(int argc UNUSED, const char **argv UNUSED,
-			  const char *prefix UNUSED, struct repository *repo)
+static void migrate_worktree(struct worktree *wt)
 {
 	struct strbuf module_dir = STRBUF_INIT;
 	DIR *dir;
 	struct dirent *de;
-	int repo_version = 0;
 
-	repo_git_path_append(repo, &module_dir, "modules/");
+	strbuf_addstr(&module_dir, worktree_git_path(wt, "modules/"));
+
+	if (!is_directory(module_dir.buf))
+		goto cleanup;
 
 	dir = opendir(module_dir.buf);
 	if (!dir)
@@ -1400,8 +1432,6 @@ static int module_migrate(int argc UNUSED, const char **argv UNUSED,
 
 	while ((de = readdir(dir))) {
 		struct strbuf gitdir_path = STRBUF_INIT;
-		char *key;
-		const char *value;
 
 		if (is_dot_or_dotdot(de->d_name))
 			continue;
@@ -1413,19 +1443,66 @@ static int module_migrate(int argc UNUSED, const char **argv UNUSED,
 		}
 		strbuf_release(&gitdir_path);
 
-		key = xstrfmt("submodule.%s.gitdir", de->d_name);
-		if (!repo_config_get_string_tmp(repo, key, &value)) {
-			/* Already has a gitdir config, nothing to do. */
-			free(key);
-			continue;
-		}
-		free(key);
-
-		create_default_gitdir_config(de->d_name);
+		create_default_gitdir_config(de->d_name, wt);
 	}
 
 	closedir(dir);
+
+cleanup:
 	strbuf_release(&module_dir);
+}
+
+static void unset_submodule_gitdir_in_repo_config(struct repository *repo)
+{
+	struct config_set cs = { 0 };
+	char *file = repo_git_path(repo, "config");
+	struct string_list keys = STRING_LIST_INIT_DUP;
+	struct string_list_item *item;
+	int i;
+
+	git_configset_init(&cs);
+	git_configset_add_file(&cs, file);
+
+	for (i = 0; i < cs.list.nr; i++) {
+		const char *var = cs.list.items[i].e->key;
+		const char *subsection, *key;
+		size_t subsection_len;
+
+		if (!parse_config_key(var, "submodule",
+				      &subsection, &subsection_len, &key) &&
+		    subsection && !strcmp(key, "gitdir"))
+			string_list_insert(&keys, var);
+	}
+
+	for_each_string_list_item(item, &keys) {
+		if (repo_config_set_in_file_gently(repo,
+						   file, item->string,
+						   NULL, NULL))
+			error(_("failed to unset '%s' in '%s'"),
+			      item->string, file);
+	}
+
+	string_list_clear(&keys, 0);
+	git_configset_clear(&cs);
+	free(file);
+}
+
+static int module_migrate(int argc UNUSED, const char **argv UNUSED,
+			  const char *prefix UNUSED, struct repository *repo)
+{
+	struct worktree **worktrees, **p;
+	int repo_version = 0;
+
+	if (init_worktree_config(repo)) {
+		error(_("failed to initialize worktree config"));
+		return 1;
+	}
+
+	worktrees = get_worktrees_without_reading_head(repo);
+	for (p = worktrees; *p; p++) {
+		migrate_worktree(*p);
+	}
+	free_worktrees(worktrees);
 
 	repo_config_get_int(the_repository, "core.repositoryformatversion", &repo_version);
 	if (repo_version == 0 &&
@@ -1440,6 +1517,8 @@ static int module_migrate(int argc UNUSED, const char **argv UNUSED,
 		      "git config extensions.submodulePathConfig true"));
 
 	repo->repository_format_submodule_path_cfg = 1;
+
+	unset_submodule_gitdir_in_repo_config(repo);
 
 	return 0;
 }
@@ -3821,8 +3900,11 @@ static int module_add(int argc, const char **argv, const char *prefix,
 	add_data.progress = !!progress;
 	add_data.dissociate = !!dissociate;
 
-	if (the_repository->repository_format_submodule_path_cfg)
-		create_default_gitdir_config(add_data.sm_name);
+	if (the_repository->repository_format_submodule_path_cfg) {
+		struct worktree *wt = get_current_worktree(the_repository);
+		create_default_gitdir_config(add_data.sm_name, wt);
+		free_worktree(wt);
+	}
 
 	if (add_submodule(&add_data))
 		goto cleanup;
